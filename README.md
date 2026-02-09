@@ -28,6 +28,7 @@ A powerful WoW addon designed to streamline the attunement process by automatica
 - **Equipment Sets** - Create and manage custom equipment configurations
 - **Performance Optimization** - Intelligent caching reduces memory usage
 - **Debug Tools** - Comprehensive logging and troubleshooting options
+- **Mass Craft Helper** - Allows you to vendor duplicates and lesser forged items
 
 ## 🚀 Installation
 
