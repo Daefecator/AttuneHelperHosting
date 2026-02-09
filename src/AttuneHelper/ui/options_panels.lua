@@ -123,6 +123,14 @@ function AH.SaveAllSettings()
             end
         end
     end
+    
+    -- Save vendorForgedBoE dropdown value
+    if AH.UI.panels and AH.UI.panels.main then
+        local ddForged = _G["AttuneHelperVendorForgedBoEDropdown"]
+        if ddForged and UIDropDownMenu_GetSelectedValue(ddForged) then
+            AttuneHelperDB["vendorForgedBoE"] = UIDropDownMenu_GetSelectedValue(ddForged)
+        end
+    end
 end
 
 function AH.LoadAllSettings()
@@ -232,6 +240,26 @@ function AH.LoadAllSettings()
         }
         UIDropDownMenu_SetSelectedValue(AH.language_option_controls.dropdown, sel)
         UIDropDownMenu_SetText(AH.language_option_controls.dropdown, textMap[sel] or sel)
+    end
+
+    -- Load vendorForgedBoE dropdown
+    if AH.UI.panels and AH.UI.panels.main then
+        local ddForged = _G["AttuneHelperVendorForgedBoEDropdown"]
+        if ddForged then
+            local value = AttuneHelperDB["vendorForgedBoE"] or 0
+            local textMap = {
+                [0] = "[DEFAULT] Don't vendor any BoE items",
+                [1] = "Only vendor normal BoE items",
+                [2] = "Vendor normal and TF BoE items",
+                [3] = "Vendor normal, TF, and WF BoE items"
+            }
+            UIDropDownMenu_SetSelectedValue(ddForged, value)
+            -- Set the text directly
+            local ddText = _G["AttuneHelperVendorForgedBoEDropdownText"]
+            if ddText then
+                ddText:SetText(textMap[value])
+            end
+        end
     end
 
     if AH.UpdateDisplayMode then
@@ -351,22 +379,12 @@ function AH.CreateOptionPanels()
     description_ah:SetPoint("RIGHT", -32, 0)
     description_ah:SetJustifyH("LEFT")
     description_ah:SetText("Main options for AttuneHelper.")
-
-    -- General Options Panel
-    local generalOptionsPanel = CreateFrame("Frame", "AttuneHelperGeneralOptionsPanel", mainPanel)
-    generalOptionsPanel.name = "General Logic"
-    generalOptionsPanel.parent = mainPanel.name
-    InterfaceOptions_AddCategory(generalOptionsPanel)
     
-    local titleG = generalOptionsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    titleG:SetPoint("TOPLEFT", 16, -16)
-    titleG:SetText("General Logic Settings")
-    
-    local descG = generalOptionsPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    descG:SetPoint("TOPLEFT", titleG, "BOTTOMLEFT", 0, -8)
-    descG:SetPoint("RIGHT", -32, 0)
-    descG:SetJustifyH("LEFT")
-    descG:SetText("Configure core addon behavior and equip logic.")
+    -- Add a separator/title for General Logic
+    local generalTitle = mainPanel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    generalTitle:SetPoint("TOPLEFT", description_ah, "BOTTOMLEFT", 0, -20)
+    generalTitle:SetText("General Logic Settings")
+    generalTitle:SetTextColor(0.8, 0.8, 1)  -- Light blue color
 
     -- Theme Options Panel
     local themeOptionsPanel = CreateFrame("Frame", "AttuneHelperThemeOptionsPanel", mainPanel)
@@ -419,26 +437,36 @@ function AH.CreateOptionPanels()
     -- Store panel references
     AH.UI.panels = {
         main = mainPanel,
-        general = generalOptionsPanel,
         theme = themeOptionsPanel,
         blacklist = blacklistPanel,
         forge = forgeOptionsPanel
     }
 
-    return mainPanel, generalOptionsPanel, themeOptionsPanel, blacklistPanel, forgeOptionsPanel
+    return mainPanel, themeOptionsPanel, blacklistPanel, forgeOptionsPanel
 end
 
 ------------------------------------------------------------------------
 -- Initialize option checkboxes
 ------------------------------------------------------------------------
+------------------------------------------------------------------------
+-- Initialize option checkboxes (COMPACT VERTICAL VERSION)
+------------------------------------------------------------------------
 function AH.InitializeOptionCheckboxes()
     wipe(AH.blacklist_checkboxes)
     wipe(AH.general_option_checkboxes)
 
-    local blacklistPanel = AH.UI.panels.blacklist
-    local generalOptionsPanel = AH.UI.panels.general
+    -- Directly access the frames by their global names
+    local blacklistPanel = _G["AttuneHelperBlacklistOptionsPanel"]
+    local mainPanel = _G["AttuneHelperOptionsPanel"]
+    
+    if not blacklistPanel or not mainPanel then
+        print("|cffff0000[AH]|r Warning: Option panels not found. Blacklist panel:", tostring(blacklistPanel), "Main panel:", tostring(mainPanel))
+        return
+    end
 
-    -- Blacklist checkboxes
+    print("|cff00ff00[AH]|r Initializing checkboxes on panels found")
+
+    -- Blacklist checkboxes (unchanged)
     local x, y, r, c = 16, -60, 0, 0
     for _, sN in ipairs(AH.slots) do
         local cb = AH.CreateCheckbox(sN, blacklistPanel, x + 120 * c, y - 33 * r, false, sN)
@@ -451,10 +479,24 @@ function AH.InitializeOptionCheckboxes()
         end
     end
 
-    -- General option checkboxes
-    local gYO = -60
+    -- COMPACT VERTICAL: General option checkboxes - one under another with reduced spacing
+    local startY = -80  -- Start a bit higher
+    local checkboxX = 16
+    local rowHeight = 22
+    local currentY = startY
+    
     for _, oD in ipairs(AH.general_options_list_for_checkboxes) do
-        local cb = AH.CreateCheckbox(oD.text, generalOptionsPanel, 16, gYO, true, oD.dbKey)
+        -- Create a custom compact checkbox (not using the helper to control font size)
+        local cN = "AttuneHelperGeneral_" .. oD.dbKey:gsub("[^%w]", "") .. "Checkbox"
+        local cb = CreateFrame("CheckButton", cN, mainPanel, "UICheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", checkboxX, currentY)
+        
+        -- Use smaller font for the checkbox text
+        local txt = cb:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")  -- Changed from GameFontHighlight
+        txt:SetPoint("LEFT", cb, "RIGHT", 2, 0)  -- Reduced from 4 to 2
+        txt:SetText(AH.t(oD.text))
+        
+        cb.dbKey = oD.dbKey
         table.insert(AH.general_option_checkboxes, cb)
         
         if oD.dbKey == "EquipNewAffixesOnly" then
@@ -467,8 +509,61 @@ function AH.InitializeOptionCheckboxes()
         else
             cb:SetScript("OnClick", AH.SaveAllSettings)
         end
-        gYO = gYO - 33
+        currentY = currentY - rowHeight
     end
+    
+    -- Position vendorForgedBoE dropdown below all checkboxes
+    local totalCheckboxHeight = #AH.general_options_list_for_checkboxes * rowHeight
+    local forgedLabelY = startY - totalCheckboxHeight - 10  -- 10px gap after last checkbox
+    
+    -- Vendor Forged BoE Label
+    local forgedLabel = mainPanel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    forgedLabel:SetPoint("TOPLEFT", checkboxX, forgedLabelY)
+    forgedLabel:SetText("Mass craft vendor items helper:")
+    
+    -- Vendor Forged BoE Dropdown
+    local forgedDD = CreateFrame("Frame", "AttuneHelperVendorForgedBoEDropdown", mainPanel, "UIDropDownMenuTemplate")
+    forgedDD:SetPoint("TOPLEFT", forgedLabel, "BOTTOMLEFT", -16, -6)  -- Reduced from -8 to -6
+    UIDropDownMenu_SetWidth(forgedDD, 300)
+    
+    -- set the text on the dropdown's text object
+    local initialValue = AttuneHelperDB["vendorForgedBoE"] or 0
+    local textMap = {
+        [0] = "[DEFAULT] Don't vendor any BoE items",
+        [1] = "Only vendor normal BoE items",
+        [2] = "Vendor normal and TF BoE items",
+        [3] = "Vendor normal, TF, and WF BoE items"
+    }
+
+    -- Get the dropdown's text object and set its text
+    local ddText = _G["AttuneHelperVendorForgedBoEDropdownText"]
+    if ddText then
+        ddText:SetText(textMap[initialValue])
+        -- Make dropdown text a bit smaller too
+        ddText:SetFontObject("GameFontNormalSmall")
+    end
+
+    UIDropDownMenu_Initialize(forgedDD, function(s)
+        -- Use numeric iteration to guarantee order (0, 1, 2, 3)
+        for value = 0, 3 do
+            local text = textMap[value]
+            if text then
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = text
+                info.value = value
+                info.func = function(self)
+                    UIDropDownMenu_SetSelectedValue(forgedDD, self.value)
+                    _ = ddText and ddText:SetText(textMap[self.value])
+                    AttuneHelperDB["vendorForgedBoE"] = self.value
+                    AH.SaveAllSettings()
+                end
+                info.checked = (value == (AttuneHelperDB["vendorForgedBoE"] or 0))
+                UIDropDownMenu_AddButton(info)
+            end
+        end
+    end)
+    
+    print("|cff00ff00[AH]|r Compact vertical checkboxes initialized successfully")
 end
 
 ------------------------------------------------------------------------
@@ -779,13 +874,17 @@ function AH.SetupPanelHandlers()
         AH.SaveAllSettings()
     end
     
-    -- Set handlers for all panels
-    if AH.UI.optionsPanels then
-        for _, panel in pairs(AH.UI.optionsPanels) do
-            if panel then
-                panel:SetScript("OnHide", SaveOnClose)
-            end
+    -- Set handlers for all panels in AH.UI.panels
+    for _, panel in pairs(AH.UI.panels) do
+        if panel and type(panel) == "table" and panel.SetScript then
+            panel:SetScript("OnHide", SaveOnClose)
         end
+    end
+    
+    -- Also handle main panel separately if needed
+    local mainPanel = AH.UI.panels.main
+    if mainPanel then
+        mainPanel:SetScript("OnHide", SaveOnClose)
     end
 end
 
@@ -806,42 +905,6 @@ function AH.CreateMainOptionsPanel()
     subtitle:SetText("Automated equipment management for attunement progression.")
 
     return mainPanel
-end
-
-------------------------------------------------------------------------
--- Create general options panel
-------------------------------------------------------------------------
-function AH.CreateGeneralOptionsPanel(mainPanel)
-    local generalOptionsPanel = CreateFrame("Frame", "AttuneHelperGeneralOptionsPanel", mainPanel)
-    generalOptionsPanel.name = "General Logic"
-    generalOptionsPanel.parent = mainPanel.name
-    InterfaceOptions_AddCategory(generalOptionsPanel)
-
-    local title = generalOptionsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("General Logic Options")
-
-    local yOffset = -50
-    for i, opt in ipairs(AH.general_options_list_for_checkboxes) do
-        local cb = AH.CreateCheckbox(opt.text, generalOptionsPanel, 16, yOffset, true, opt.dbKey)
-        table.insert(AH.general_option_checkboxes, cb)
-        
-        -- ʕ •ᴥ•ʔ✿ Add click handlers for general option checkboxes ✿ ʕ •ᴥ•ʔ
-        if opt.dbKey == "EquipNewAffixesOnly" then
-            cb:SetScript("OnClick", function(s)
-                AH.SaveSettingsForced()
-                if AH.UpdateItemCountText then
-                    AH.UpdateItemCountText()
-                end
-            end)
-        else
-            cb:SetScript("OnClick", AH.SaveSettingsForced)
-        end
-        
-        yOffset = yOffset - 25
-    end
-
-    return generalOptionsPanel
 end
 
 ------------------------------------------------------------------------
@@ -1023,27 +1086,22 @@ function AH.InitializeAllOptions()
     -- Initialize the data structures first
     AH.InitializeOptionControls()
     
-    -- Create main panel
-    local mainPanel = AH.CreateMainOptionsPanel()
+    -- Create all panels
+    local mainPanel, themePanel, blacklistPanel, forgePanel = AH.CreateOptionPanels()
     
-    -- Create sub-panels
-    local generalPanel = AH.CreateGeneralOptionsPanel(mainPanel)
-    local themePanel = AH.CreateThemeOptionsPanel(mainPanel)
-    local blacklistPanel = AH.CreateBlacklistOptionsPanel(mainPanel)
-    local forgePanel = AH.CreateForgeOptionsPanel(mainPanel)
+    -- Create weapon panel separately since it's not in CreateOptionPanels
     local weaponPanel = AH.CreateWeaponControlsPanel(mainPanel)
     
-    -- Store panel references
-    AH.UI.optionsPanels = {
-        main = mainPanel,
-        general = generalPanel,
-        theme = themePanel,
-        blacklist = blacklistPanel,
-        forge = forgePanel,
-        weapon = weaponPanel
-    }
+    -- Store ALL panel references in AH.UI.panels
+    AH.UI.panels = AH.UI.panels or {}  -- Ensure it exists
+    AH.UI.panels.weapon = weaponPanel  -- Add weapon panel
     
-    -- Setup event handlers
+    -- Now InitializeOptionCheckboxes will work since AH.UI.panels exists
+    AH.InitializeOptionCheckboxes()
+    AH.InitializeForgeOptionCheckboxes()
+    AH.InitializeThemeOptions()
+    
+    -- Update SetupPanelHandlers to use AH.UI.panels
     AH.SetupPanelHandlers()
     
     print("|cff00ff00[AttuneHelper]|r Options panels initialized successfully")
@@ -1052,4 +1110,4 @@ end
 -- Export all functions
 _G.SaveAllSettings = AH.SaveAllSettings
 _G.LoadAllSettings = AH.LoadAllSettings
-_G.InitializeAllOptions = AH.InitializeAllOptions 
+_G.InitializeAllOptions = AH.InitializeAllOptions
