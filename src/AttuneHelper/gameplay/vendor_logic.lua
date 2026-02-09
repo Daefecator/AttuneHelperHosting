@@ -8,6 +8,18 @@ function AH.GetQualifyingVendorItems()
     local itemsToVendor = {}
     local boeScanTT = nil
 
+    -- Configuration for BoE forged items
+    -- 0 = don't mark "to vendor" anything (original algorithm)
+    -- 1 = mark only normal items
+    -- 2 = mark normal and TF items
+    -- 3 = mark normal, TF and WF items
+    -- Any other value = treat as 3
+    local vendorForgedBoE = AttuneHelperDB["vendorForgedBoE"] or 0
+
+    -- Dictionary to track best forged variants encountered so far
+    -- Key: base item link (without forged flags), Value: {forged = X, bag = Y, slot = Z, ...}
+    local bestForgedSeen = {}
+
     AH.print_debug_vendor_preview("=== GetQualifyingVendorItems: Starting scan ===")
 
     local function IsBoEUnboundForVendorCheck(itemID, bag, slot_idx)
@@ -38,6 +50,46 @@ function AH.GetQualifyingVendorItems()
         end
         boeScanTT:Hide()
         return isBoE
+    end
+
+    -- Logically separate an item link into base link AND forged status
+    -- Returns: baseLink, forgedStatus (0=normal, 1=TF, 2=WF, 3=LF)
+    local function GetItemForgedInfo(link)
+        if not link then return nil, 0 end
+        
+        -- Extract the item string from the link
+        local itemString = link:match("|H(item:[^|]+)|h")
+        if not itemString then return nil, 0 end
+        
+        -- Split the item string by colon
+        local parts = {strsplit(":", itemString)}
+        if #parts < 9 then return itemString, 0 end -- Return original if not enough parts
+        
+        -- Forged flag constants
+        local TF = 2^12  -- 4096
+        local WF = 2^13  -- 8192
+        local LF = TF + WF  -- 12288
+        
+        -- Get and analyze flags from part 9
+        local flags = tonumber(parts[9]) or 0
+        local forgedFlags = bit.band(flags, LF)
+        
+        -- Determine forged status
+        local forgedStatus = 0
+        if forgedFlags == TF then
+            forgedStatus = 1
+        elseif forgedFlags == WF then
+            forgedStatus = 2
+        elseif forgedFlags == LF then
+            forgedStatus = 3
+        end
+        
+        -- Create base link by clearing forged flags
+        local baseFlags = bit.band(flags, bit.bnot(LF))
+        parts[9] = tostring(baseFlags)
+        local baseLink = table.concat(parts, ":")
+        
+        return baseLink, forgedStatus
     end
 
     -- Determine which bags to scan (include bank if open)
@@ -126,21 +178,14 @@ function AH.GetQualifyingVendorItems()
                         end
                     end
 
-                    -- Check attunement progress
-                    if not skip then
-                        local thisVariantProgress = 0
-                        if _G.GetItemLinkAttuneProgress then
-                            local progressSuccess, progress = pcall(GetItemLinkAttuneProgress, link)
-                            if progressSuccess and type(progress) == "number" then
-                                thisVariantProgress = progress
-                            end
-                        end
-
-                        local isThisVariantFullyAttuned = (thisVariantProgress >= 100)
-
-                        if not isThisVariantFullyAttuned then
-                            skip = true
-                            skipReason = "This variant only " .. thisVariantProgress .. "% attuned"
+                    -- Check attunement progress (but don't skip just yet!)
+                    local thisVariantProgress = 0
+                    local isThisVariantFullyAttuned = false
+                    if _G.GetItemLinkAttuneProgress then
+                        local progressSuccess, progress = pcall(GetItemLinkAttuneProgress, link)
+                        if progressSuccess and type(progress) == "number" then
+                            thisVariantProgress = progress
+                            isThisVariantFullyAttuned = (thisVariantProgress >= 100)
                         end
                     end
 
@@ -163,15 +208,111 @@ function AH.GetQualifyingVendorItems()
                         local doSell = (isM and sellM) or not isM
 
                         if doSell and not noSellBoE then
-                            table.insert(itemsToVendor, {
-                                name = n,
-                                link = link,
-                                id = id,
-                                quality = q,
-                                bag = b,
-                                slot = s
-                            })
-                            AH.print_debug_vendor_preview("GetQualifying: ✓ ADDING to vendor list: " .. n)
+                            -- Get base item link and forged status in one call
+                            local baseLink, currentForged = GetItemForgedInfo(link)
+                            
+                            AH.print_debug_vendor_preview("GetQualifying: Base link: " .. tostring(baseLink) .. 
+                                ", Forged: " .. currentForged .. ", Attuned: " .. thisVariantProgress .. "%")
+
+                            if baseLink then
+                                -- If item is fully attuned, vendor it
+                                if isThisVariantFullyAttuned then
+                                    AH.print_debug_vendor_preview("GetQualifying: Item is attuned, vendoring: " .. n)
+                                    
+                                    table.insert(itemsToVendor, {
+                                        name = n,
+                                        link = link,
+                                        id = id,
+                                        quality = q,
+                                        bag = b,
+                                        slot = s
+                                    })
+                                    AH.print_debug_vendor_preview("GetQualifying: ✓ ADDING attuned item to vendor list: " .. n)
+                                else
+                                    -- Item is not attuned - apply forged logic
+                                    -- Check if we've seen this base item before
+                                    local bestInfo = bestForgedSeen[baseLink]
+                                    if bestInfo then
+                                        -- Compare forged status (LF=3 > WF=2 > TF=1 > Normal=0)
+                                        if currentForged > bestInfo.forged then
+                                            -- Current item is better forged
+                                            AH.print_debug_vendor_preview("GetQualifying: Current item (" .. currentForged .. 
+                                                ") is better than previous best (" .. bestInfo.forged .. ").")
+                                            
+                                            -- Mark previous best for vendor (with respect to config)
+                                            if not bestInfo.boe or bestInfo.forged < vendorForgedBoE then
+                                                table.insert(itemsToVendor, {
+                                                    name = bestInfo.name,
+                                                    link = bestInfo.link,
+                                                    id = bestInfo.id,
+                                                    quality = bestInfo.quality,
+                                                    bag = bestInfo.bag,
+                                                    slot = bestInfo.slot
+                                                })
+                                            end
+                                            
+                                            -- Update dictionary with new best
+                                            bestForgedSeen[baseLink] = {
+                                                forged = currentForged,
+                                                name = n,
+                                                link = link,
+                                                id = id,
+                                                quality = q,
+                                                bag = b,
+                                                slot = s,
+                                                boe = isBoEU,
+                                            }
+                                            
+                                            AH.print_debug_vendor_preview("GetQualifying: New best: " .. n .. " (Forged: " .. currentForged .. ")")
+                                        else
+                                            -- Current item is same or inferior forged - vendor it
+                                            AH.print_debug_vendor_preview("GetQualifying: Current item (" .. currentForged .. 
+                                                ") is same/inferior to previous best (" .. bestInfo.forged .. "). Vendoring current.")
+                                            
+                                            -- Mark previous best for vendor (with respect to config)
+                                            if not isBoEU or currentForged < vendorForgedBoE then
+                                                table.insert(itemsToVendor, {
+                                                    name = n,
+                                                    link = link,
+                                                    id = id,
+                                                    quality = q,
+                                                    bag = b,
+                                                    slot = s
+                                                })
+                                            end
+                                            AH.print_debug_vendor_preview("GetQualifying: ✓ ADDING to vendor list: " .. n)
+                                        end
+                                    else
+                                        -- First time seeing this base item (and it's not attuned)
+                                        AH.print_debug_vendor_preview("GetQualifying: First time seeing base item. Adding to dictionary.")
+                                        
+                                        bestForgedSeen[baseLink] = {
+                                            forged = currentForged,
+                                            name = n,
+                                            link = link,
+                                            id = id,
+                                            quality = q,
+                                            bag = b,
+                                            slot = s,
+                                            boe = isBoEU,
+                                        }
+                                        
+                                        AH.print_debug_vendor_preview("GetQualifying: First seen (not attuned): " .. n .. " (Forged: " .. currentForged .. ")")
+                                    end
+                                end
+                            else
+                                -- Couldn't get base link, fallback to original behavior
+                                AH.print_debug_vendor_preview("GetQualifying: Couldn't get base link, using fallback.")
+                                table.insert(itemsToVendor, {
+                                    name = n,
+                                    link = link,
+                                    id = id,
+                                    quality = q,
+                                    bag = b,
+                                    slot = s
+                                })
+                                AH.print_debug_vendor_preview("GetQualifying: ✓ ADDING to vendor list (fallback): " .. n)
+                            end
                         else
                             skip = true
                             skipReason = "BoE/Mythic rules (doSell=" .. tostring(doSell) .. ", noSellBoE=" .. tostring(noSellBoE) .. ")"
